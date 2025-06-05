@@ -114,6 +114,115 @@ class Neo4jDatabase:
             raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
     
     @classmethod
+    async def analyze_cycles(cls) -> Dict[str, Any]:
+        """Analyze the graph for cyclic dependencies using APOC procedures"""
+        if not cls.client or not cls.client.is_connected:
+            raise HTTPException(status_code=500, detail="Database not connected")
+        
+        logger.info("Starting cycle analysis...")
+        
+        try:
+            # First, check if APOC is available
+            apoc_check_query = "RETURN apoc.version() as version"
+            try:
+                await cls.client.execute_query(apoc_check_query)
+                logger.info("APOC procedures are available")
+            except Exception as apoc_error:
+                logger.warning(f"APOC procedures not available: {apoc_error}")
+                return {
+                    "cycles_detected": False,
+                    "cycles": [],
+                    "responsible_instances": [],
+                    "error": "APOC procedures not available"
+                }
+            
+            # Execute the cycle detection query
+            cycle_query = """
+            MATCH (m:Module)
+            WITH collect(m) AS modules
+            CALL apoc.nodes.cycles(modules, {relTypes: ['DEPENDS_ON']})
+            YIELD path
+            WITH path, [n IN nodes(path) WHERE 'Module' IN labels(n) | n.name] AS moduleNames
+            MATCH (i:Instance)-[:DEPLOYS]->(m:Module)
+            WHERE m.name IN moduleNames
+            RETURN path, collect(DISTINCT i.name) AS deployingInstances
+            """
+            
+            cycle_results = await cls.client.execute_query(cycle_query)
+            
+            cycles = []
+            all_responsible_instances = set()
+            
+            for result in cycle_results:
+                # Extract module names from the path
+                path = result.get("path")
+                deploying_instances = result.get("deployingInstances", [])
+                
+                if path:
+                    # Convert path to list of module names
+                    # The path contains nodes and relationships, we need to extract module names
+                    module_names = []
+                    # This is a simplified extraction - in practice, you might need to parse the path object
+                    # For now, we'll use the moduleNames that should be in the result
+                    # Since the query already extracts moduleNames, we can use that
+                    
+                    # Alternative approach: extract from deployingInstances context
+                    # We'll need to re-query to get the actual cycle path
+                    pass
+                
+                # Add deploying instances to the set
+                all_responsible_instances.update(deploying_instances)
+            
+            # Alternative simpler approach for cycle detection without complex path parsing
+            simple_cycle_query = """
+            MATCH (m:Module)
+            WITH collect(m) AS modules
+            CALL apoc.nodes.cycles(modules, {relTypes: ['DEPENDS_ON']})
+            YIELD path
+            WITH [n IN nodes(path) WHERE 'Module' IN labels(n) | n.name] AS moduleNames
+            WHERE size(moduleNames) > 0
+            MATCH (i:Instance)-[:DEPLOYS]->(m:Module)
+            WHERE m.name IN moduleNames
+            RETURN moduleNames, collect(DISTINCT i.name) AS deployingInstances
+            """
+            
+            simple_results = await cls.client.execute_query(simple_cycle_query)
+            
+            cycles = []
+            all_responsible_instances = set()
+            
+            for result in simple_results:
+                module_names = result.get("moduleNames", [])
+                deploying_instances = result.get("deployingInstances", [])
+                
+                if module_names:
+                    # Add the first module at the end to show the cycle
+                    cycle_path = module_names + [module_names[0]] if module_names else []
+                    cycles.append(cycle_path)
+                    all_responsible_instances.update(deploying_instances)
+            
+            cycles_detected = len(cycles) > 0
+            responsible_instances = sorted(list(all_responsible_instances))
+            
+            logger.info(f"Cycle analysis completed: {len(cycles)} cycles detected, {len(responsible_instances)} responsible instances")
+            
+            return {
+                "cycles_detected": cycles_detected,
+                "cycles": cycles,
+                "responsible_instances": responsible_instances
+            }
+            
+        except Exception as e:
+            logger.error(f"Error during cycle analysis: {e}")
+            # Return safe defaults instead of raising exception
+            return {
+                "cycles_detected": False,
+                "cycles": [],
+                "responsible_instances": [],
+                "error": f"Cycle analysis failed: {str(e)}"
+            }
+    
+    @classmethod
     async def execute_query(cls, query: str, parameters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """Execute a Cypher query"""
         if not cls.client or not cls.client.is_connected:

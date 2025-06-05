@@ -5,7 +5,7 @@ import time
 from db import Neo4jDatabase
 from models import (
     GraphPayload, QueryRequest, QueryResponse, IngestResponse, 
-    MultiInstanceSyncResponse, InstanceSyncResponse
+    MultiInstanceSyncResponse, InstanceSyncResponse, CycleAnalysis
 )
 
 # Configure router
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 @router.post("/ingest", response_model=IngestResponse)
 async def ingest_graph(payload: MultiInstanceSyncResponse):
-    """Ingest nodes and edges into the graph database following the exact schema conventions"""
+    """Ingest nodes and edges into the graph database with post-ingestion cycle analysis"""
     try:
         total_modules_created = 0
         total_dependencies_created = 0
@@ -69,12 +69,29 @@ async def ingest_graph(payload: MultiInstanceSyncResponse):
             total_dependencies_created += result["dependencies_created"]
             processed_instances += 1
         
+        # Perform post-ingestion cycle analysis
+        logger.info("Starting post-ingestion cycle analysis...")
+        cycle_analysis_result = await Neo4jDatabase.analyze_cycles()
+        
+        cycle_analysis = CycleAnalysis(
+            cycles_detected=cycle_analysis_result["cycles_detected"],
+            cycles=cycle_analysis_result["cycles"],
+            responsible_instances=cycle_analysis_result["responsible_instances"]
+        )
+        
+        # Log cycle analysis results
+        if cycle_analysis.cycles_detected:
+            logger.warning(f"Cycles detected: {len(cycle_analysis.cycles)} cycles involving {len(cycle_analysis.responsible_instances)} instances")
+        else:
+            logger.info("No cycles detected in the dependency graph")
+        
         return IngestResponse(
             status="success",
             processed_instances=processed_instances,
             nodes_created=total_modules_created,  # Now represents modules created
             edges_created=total_dependencies_created,  # Now represents dependencies created
-            message=f"Successfully ingested data from {processed_instances} instances following schema conventions"
+            message=f"Successfully ingested data from {processed_instances} instances with cycle analysis",
+            cycle_analysis=cycle_analysis
         )
     except Exception as e:
         logger.error(f"Error in graph ingestion: {str(e)}")

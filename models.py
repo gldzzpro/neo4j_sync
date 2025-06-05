@@ -28,13 +28,20 @@ class QueryResponse(BaseModel):
     results: List[Dict[str, Any]]
     execution_time: float
 
+class CycleAnalysis(BaseModel):
+    """Model for cycle analysis results"""
+    cycles_detected: bool
+    cycles: List[List[str]]  # List of cycles, each cycle is a list of module names
+    responsible_instances: List[str]  # List of instance names that deploy modules in cycles
+
 class IngestResponse(BaseModel):
-    """Model for a graph ingestion response"""
+    """Model for a graph ingestion response with cycle analysis"""
     status: str
     processed_instances: int
     nodes_created: int  # Now represents modules created
     edges_created: int  # Now represents dependencies created
     message: str
+    cycle_analysis: CycleAnalysis
 
 # Models for handling graph_sync response format
 class ModuleNode(BaseModel):
