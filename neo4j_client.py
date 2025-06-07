@@ -111,10 +111,25 @@ class AsyncNeo4jClient:
         
         try:
             logger.debug(f"Executing query: {query}")
+            
+            # Determine if this is a write operation
+            write_keywords = ['CREATE', 'MERGE', 'SET', 'DELETE', 'REMOVE', 'DETACH DELETE']
+            is_write_operation = any(keyword in query.upper() for keyword in write_keywords)
+            
             async with self._driver.session() as session:
-                result = await session.run(query, parameters or {})
-                data = await result.data()
-                records = [record for record in data]
+                if is_write_operation:
+                    # Use write transaction for write operations
+                    async def _execute_write(tx):
+                        result = await tx.run(query, parameters or {})
+                        data = await result.data()
+                        return [record for record in data]
+                    
+                    records = await session.execute_write(_execute_write)
+                else:
+                    # Use regular session for read operations
+                    result = await session.run(query, parameters or {})
+                    data = await result.data()
+                    records = [record for record in data]
                 logger.debug(f"Query returned {len(records)} records")
                 return records
         except Exception as e:
