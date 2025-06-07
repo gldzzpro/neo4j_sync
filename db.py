@@ -76,18 +76,36 @@ class Neo4jDatabase:
                     modules_created += module_result[0]["modules_created"]
                     instance_module_relationships += module_result[0]["relationships_created"]
             
-            # Step 3: Create Module->Module dependency relationships
+            # Step 3: Create Module->Module dependency relationships with uniqueness
             dependencies_created = 0
             
             for edge in edges:
+                # Modified query to ensure unique relationships and track instances
                 dependency_query = """
                 MERGE (m_from:Module { name: $from_name }) 
                 ON CREATE SET m_from.created = timestamp(), m_from.version = $from_version
                 MERGE (m_to:Module { name: $to_name }) 
                 ON CREATE SET m_to.created = timestamp(), m_to.version = $to_version
-                MERGE (m_from)-[:DEPENDS_ON { instance: $instance_name, since: timestamp() }]->(m_to)
-                MERGE (m_to)-[:DEPENDS_BY { instance: $instance_name, since: timestamp() }]->(m_from)
-                RETURN count(*) as dependencies_created
+                
+                // Create unique DEPENDS_ON relationship
+                MERGE (m_from)-[dep_on:DEPENDS_ON]->(m_to)
+                ON CREATE SET dep_on.created = timestamp(), dep_on.instances = [$instance_name]
+                ON MATCH SET dep_on.instances = 
+                    CASE 
+                        WHEN $instance_name IN dep_on.instances THEN dep_on.instances
+                        ELSE dep_on.instances + $instance_name
+                    END
+                
+                // Create unique DEPENDS_BY relationship
+                MERGE (m_to)-[dep_by:DEPENDS_BY]->(m_from)
+                ON CREATE SET dep_by.created = timestamp(), dep_by.instances = [$instance_name]
+                ON MATCH SET dep_by.instances = 
+                    CASE 
+                        WHEN $instance_name IN dep_by.instances THEN dep_by.instances
+                        ELSE dep_by.instances + $instance_name
+                    END
+                
+                RETURN count(dep_on) as dependencies_created
                 """
                 
                 dependency_result = await cls.client.execute_query(dependency_query, {
