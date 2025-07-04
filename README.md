@@ -138,6 +138,7 @@ The API returns appropriate HTTP status codes and error messages in JSON format:
 ## Logging
 
 The application logs:
+
 - DEBUG level: Cypher queries and parameters
 - INFO level: Query execution summaries, node/edge counts
 - ERROR level: Exceptions and error details
